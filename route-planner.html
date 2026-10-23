@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ocean King route planner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{
+  --bg:#EAF0F1; --surface:#FFFFFF; --ink:#0E2A35; --muted:#55707A; --line:#CFDADD;
+  --sea:#1C6B78; --on-sea:#FFFFFF; --signal:#D9971A; --alert:#B3412B; --ok:#2C7A57;
+  --font:"Archivo","Segoe UI","Helvetica Neue",Arial,sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0B1A20; --surface:#11252D; --ink:#E4EDEF; --muted:#92A9B1; --line:#23414B;
+    --sea:#5BB4C1; --on-sea:#06171C; --signal:#EDB648; --alert:#E57A63; --ok:#62C495; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0B1A20; --surface:#11252D; --ink:#E4EDEF; --muted:#92A9B1; --line:#23414B;
+  --sea:#5BB4C1; --on-sea:#06171C; --signal:#EDB648; --alert:#E57A63; --ok:#62C495; color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:14px;line-height:1.45;font-variant-numeric:tabular-nums;
+  display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+button,input,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
+.hidden{display:none !important}
+
+.bar{display:flex;align-items:center;gap:10px 14px;flex-wrap:wrap;padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--line)}
+.bar h1{margin:0;font-size:22px;font-stretch:72%;font-weight:800;margin-right:auto}
+.bar .meta{color:var(--muted);font-size:13px}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:6px 12px;cursor:pointer;white-space:nowrap}
+.btn:hover:not(:disabled){border-color:var(--sea)}
+.btn:disabled{opacity:.45;cursor:default}
+.btn.primary{background:var(--sea);border-color:var(--sea);color:var(--on-sea);font-weight:650}
+.btn.small{padding:3px 8px;font-size:13px}
+
+.layout{flex:1;display:grid;grid-template-columns:minmax(330px,420px) 1fr;min-height:0}
+aside{overflow-y:auto;border-right:1px solid var(--line);background:var(--bg);padding:14px 14px 40px}
+#map{min-height:300px;background:#dfe6e8}
+@media (max-width:820px){ .layout{grid-template-columns:1fr;grid-template-rows:55vh auto} #map{order:-1} aside{border-right:0;border-top:1px solid var(--line)} }
+
+.drop{border:2px dashed var(--line);border-radius:10px;background:var(--surface);padding:30px 18px;text-align:center;cursor:pointer}
+.drop.over{border-color:var(--sea)}
+.drop h2{margin:0 0 6px;font-size:19px;font-stretch:85%}
+.drop p{margin:4px 0;color:var(--muted)}
+.drop .loaded{color:var(--ok);font-weight:650}
+.error{color:var(--alert);font-weight:600;margin-top:10px}
+.banner{background:color-mix(in srgb,var(--signal) 16%,var(--surface));border:1px solid color-mix(in srgb,var(--signal) 40%,transparent);border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:13px}
+
+h2.sec{font-size:13px;color:var(--muted);font-weight:700;margin:16px 0 6px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+select.inp{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:5px 8px}
+
+.totals{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px}
+.tot{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.tot b{display:block;font-size:20px;font-stretch:78%;font-weight:750;line-height:1.15}
+.tot span{color:var(--muted);font-size:12px}
+.good{color:var(--ok)} .bad{color:var(--alert)}
+
+.runs{display:flex;flex-direction:column;gap:4px}
+.run{display:grid;grid-template-columns:14px 1fr auto;gap:8px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:7px 10px;cursor:pointer;text-align:left;width:100%}
+.run:hover{border-color:var(--sea)}
+.run[aria-pressed="true"]{border-color:var(--sea);box-shadow:inset 3px 0 0 var(--sea)}
+.sw{width:12px;height:12px;border-radius:3px}
+.run .nm{font-weight:650}
+.run .sub{color:var(--muted);font-size:12.5px}
+.run .km{text-align:right;font-size:12.5px;white-space:nowrap}
+.run .km b{font-size:14px}
+
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px;margin-top:12px}
+.panel h3{margin:0;font-size:17px;font-stretch:85%}
+.panel .kmline{color:var(--muted);margin:2px 0 10px}
+.stops{list-style:none;margin:8px 0 0;padding:0}
+.stop{display:grid;grid-template-columns:18px 26px 1fr;gap:6px;align-items:start;padding:6px 4px;border-bottom:1px solid var(--line);background:var(--surface)}
+.stop.dragging{opacity:.4}
+.stop.over{box-shadow:inset 0 2px 0 var(--sea)}
+.stop.removed .name{text-decoration:line-through;color:var(--muted)}
+.stop.sel{background:color-mix(in srgb,var(--sea) 10%,var(--surface))}
+.handle{cursor:grab;color:var(--muted);user-select:none;line-height:1.6;text-align:center}
+.seqno{font-weight:750;text-align:right;line-height:1.6}
+.name{font-weight:600}
+.pc{color:var(--muted);font-size:12.5px}
+.tools{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
+.tools select{border:1px solid var(--line);background:var(--surface);border-radius:5px;padding:1px 4px;font-size:12.5px;max-width:170px}
+.tools button{border:1px solid var(--line);background:var(--surface);border-radius:5px;padding:1px 7px;font-size:12.5px;cursor:pointer}
+.tools button:hover{border-color:var(--sea)}
+.flag{display:inline-block;font-size:11px;font-weight:700;border-radius:3px;padding:0 5px;margin-left:4px}
+.flag.lap{background:color-mix(in srgb,var(--signal) 26%,transparent)}
+.flag.far{background:color-mix(in srgb,var(--alert) 18%,transparent);color:var(--alert)}
+.flag.chg{background:color-mix(in srgb,var(--sea) 18%,transparent);color:var(--sea)}
+.flag.nol{background:color-mix(in srgb,var(--alert) 18%,transparent);color:var(--alert)}
+.changes{margin:6px 0 0;padding-left:18px;font-size:13px}
+.changes li{margin:2px 0}
+.note{color:var(--muted);font-size:12.5px;margin:8px 0 0}
+
+/* map markers */
+.pin{display:flex;align-items:center;justify-content:center;border-radius:50%;font:700 11px/1 var(--font);color:#fff;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4)}
+.pin.sel{outline:3px solid #F2B705}
+.depot{width:22px;height:22px;background:#0E2A35;border:2px solid #fff;border-radius:4px;box-shadow:0 1px 3px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;color:#fff;font:700 11px var(--font)}
+.leaflet-popup-content{font-family:var(--font);font-size:13px;margin:10px 12px}
+.pop h4{margin:0 0 2px;font-size:14px}
+.pop .pc{margin-bottom:6px}
+.pop select,.pop button{font:inherit;font-size:12.5px;margin-top:4px}
+</style>
+</head>
+<body>
+<div class="bar">
+  <h1>Route planner</h1>
+  <span class="meta" id="meta">Ocean King delivery routes on the map</span>
+  <button class="btn" id="undo" type="button" disabled>Undo</button>
+  <button class="btn" id="reset" type="button" disabled>Reset all edits</button>
+  <button class="btn" id="xls" type="button" disabled>Export plan (Excel)</button>
+  <button class="btn primary" id="kml" type="button" disabled>Google Earth: this day</button>
+  <button class="btn" id="kmlAll" type="button" disabled>Google Earth: all days</button>
+</div>
+<div class="layout">
+  <aside>
+    <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose files">
+      <h2>Open your route files</h2>
+      <p>Drop in both: the <strong>_ANALYSIS</strong> workbook and <strong>postcode_cache.csv</strong> from the notebook’s folder.</p>
+      <p id="loadState"></p>
+      <p class="note">Files are read in this browser. Only map images are downloaded; your data isn’t sent anywhere.</p>
+      <div class="error hidden" id="err"></div>
+    </div>
+    <input type="file" id="file" multiple accept=".xlsx,.xlsm,.csv" class="hidden">
+
+    <div id="ui" class="hidden">
+      <div class="banner hidden" id="restored"></div>
+      <div class="row">
+        <label for="day"><strong>Day</strong></label>
+        <select class="inp" id="day"></select>
+        <label style="margin-left:auto"><input type="checkbox" id="others" checked> Show other routes</label>
+      </div>
+      <div class="totals" id="totals"></div>
+
+      <h2 class="sec">Routes on this day</h2>
+      <div class="runs" id="runs"></div>
+
+      <div class="panel hidden" id="panel"></div>
+
+      <h2 class="sec">Your changes</h2>
+      <div class="panel" style="margin-top:0"><ul class="changes" id="changes"></ul><p class="note">Edits save automatically in this browser. Export the plan to share it.</p></div>
+    </div>
+  </aside>
+  <div id="map" role="region" aria-label="Route map"></div>
+</div>
+
+<script>
+(function(){
+"use strict";
+const DAYS=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+const COLORS=["#1C6B78","#C2410C","#7C3AED","#15803D","#B91C1C","#0369A1","#A16207","#BE185D","#4D7C0F","#0F766E","#9333EA","#B45309","#1D4ED8","#047857","#DB2777","#65A30D"];
+const int=new Intl.NumberFormat("en-GB",{maximumFractionDigits:0});
+const gbp=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP",maximumFractionDigits:0});
+const $=id=>document.getElementById(id);
+function h(tag,attrs,...kids){const e=document.createElement(tag);
+  if(attrs)for(const[k,v]of Object.entries(attrs)){if(v==null||v===false)continue;
+    if(k==="class")e.className=v;else if(k==="style")e.style.cssText=v;else if(k.startsWith("on"))e.addEventListener(k.slice(2),v);
+    else if(k==="value")e.value=v;else if(k==="selected"||k==="checked")e[k]=!!v;else e.setAttribute(k,v===true?"":v);}
+  for(const k of kids.flat(Infinity)){if(k==null||k===false)continue;e.append(k instanceof Node?k:document.createTextNode(String(k)));}
+  return e;}
+const rc=(el,...k)=>el.replaceChildren(...k.flat(Infinity).filter(x=>x!=null&&x!==false));
+const num=v=>{if(v==null||v==="")return null;if(typeof v==="number")return v;const n=Number(String(v).replace(/[£,%\s]/g,""));return Number.isFinite(n)?n:null;};
+const txt=v=>v==null?"":String(v).trim();
+const bool=v=>v===true||/^(true|yes|1)$/i.test(String(v??"").trim());
+const normPc=p=>{const c=String(p||"").toUpperCase().replace(/[^A-Z0-9]/g,"");return c.length>=5&&c.length<=7?c.slice(0,-3)+" "+c.slice(-3):"";};
+const cleanId=v=>txt(v).replace(/\.0$/,"");
+const dayIdx=d=>{const i=DAYS.indexOf(d);return i<0?9:i;};
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&apos;"}[c]));
+
+/* ---------- state ---------- */
+let analysis=null, cache=null, fileName="";
+let base=null;           // original plan, never edited
+let plan=null;           // edited plan: {runs:{key:{day,route,name,stops:[stopId]}}, stops:{id:{...}}}
+let history=[];
+let selDay=null, selRun=null, selStop=null;
+let roadFactor=1.3, depotPc="", depotLL=null, costKm=1, farKm=150;
+
+/* ---------- files ---------- */
+const drop=$("drop"), fileIn=$("file");
+drop.addEventListener("click",()=>fileIn.click());
+drop.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();fileIn.click();}});
+["dragenter","dragover"].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.add("over");}));
+["dragleave","drop"].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.remove("over");}));
+drop.addEventListener("drop",e=>handle([...e.dataTransfer.files]));
+fileIn.addEventListener("change",()=>{handle([...fileIn.files]);fileIn.value="";});
+const showErr=m=>{const e=$("err");e.textContent=m;e.classList.remove("hidden");};
+const readBuf=f=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=()=>rej(new Error("Couldn’t open "+f.name));r.readAsArrayBuffer(f);});
+
+async function handle(files){
+  if(typeof XLSX==="undefined"||typeof L==="undefined"){showErr("The map or spreadsheet library didn’t load. Check the internet connection and reload.");return;}
+  $("err").classList.add("hidden");
+  try{
+    for(const f of files){
+      const wb=XLSX.read(new Uint8Array(await readBuf(f)),{type:"array",cellDates:true});
+      if(/\.csv$/i.test(f.name)){
+        const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:null}), m=new Map();
+        for(const r of rows){const pc=normPc(r.Postcode??r.postcode),la=num(r.Latitude??r.latitude),lo=num(r.Longitude??r.longitude);if(pc&&la!=null&&lo!=null)m.set(pc,[la,lo]);}
+        if(!m.size){showErr(f.name+" isn’t a postcode file (needs Postcode, Latitude, Longitude columns).");continue;}
+        cache=m;
+      }else{
+        const get=n=>{const k=wb.SheetNames.find(x=>x.toLowerCase()===n.toLowerCase());return k?XLSX.utils.sheet_to_json(wb.Sheets[k],{defval:null}):null;};
+        const seq=get("Suggested_Sequence");
+        if(!seq){showErr(f.name+" has no Suggested_Sequence tab. Use the _ANALYSIS workbook from the notebook (run with postcodes switched on).");continue;}
+        analysis={seq,cust:get("Customer_Actions")||[],assump:get("Assumptions")||[]};fileName=f.name;
+      }
+    }
+    $("loadState").replaceChildren(
+      h("span",{class:analysis?"loaded":null},analysis?"✓ Analysis workbook":"○ Analysis workbook"),"  ",
+      h("span",{class:cache?"loaded":null},cache?"✓ Postcode file":"○ Postcode file"));
+    if(analysis&&cache)start();
+  }catch(err){showErr("Couldn’t read the file: "+err.message);}
+}
+
+/* ---------- build the plan ---------- */
+function start(){
+  const A=analysis;
+  const aVal=re=>{const r=A.assump.find(x=>re.test(txt(x["Assumption"])));return r?r["Value"]:null;};
+  roadFactor=num(aVal(/road factor/i))??1.3; costKm=num(aVal(/cost per km/i))??1;
+  depotPc=normPc(aVal(/^depot$/i)); depotLL=depotPc&&cache.has(depotPc)?cache.get(depotPc):null;
+  const custInfo=new Map(A.cust.map(c=>[cleanId(c["Cus no."]),{sales:num(c["Sales per week"]),xkm:num(c["Extra km per week"]),lapsed:bool(c["Lapsed"]),action:txt(c["Suggested actions"])}]));
+  const stops={}, runs={};
+  for(const r of A.seq){
+    const day=txt(r["Day"]), route=cleanId(r["RouteNo"]), key=day+"|"+route, cus=cleanId(r["Cus no."]);
+    const cur=num(r["Current Sequence"]), sug=num(r["Suggested Sequence"]), pc=normPc(r["Postcode"])||txt(r["Postcode"]);
+    const id=`${key}|${cus}|${cur??Object.keys(stops).length}`;
+    stops[id]={id,day,cus,name:txt(r["Name"]),pc,origRoute:route,cur,sug,info:custInfo.get(cus)||{}};
+    (runs[key]=runs[key]||{key,day,route,name:txt(r["Route Name"]),stops:[]}).stops.push(id);
+  }
+  for(const run of Object.values(runs))run.stops.sort((a,b)=>(stops[a].cur??1e9)-(stops[b].cur??1e9));
+  base={runs:structuredClone(runs),stops:structuredClone(stops)};
+  // route colours stable by route number
+  const routeNos=[...new Set(Object.values(runs).map(r=>r.route))].sort((a,b)=>a.localeCompare(b,"en",{numeric:true}));
+  routeColor=new Map(routeNos.map((r,i)=>[r,COLORS[i%COLORS.length]]));
+  // restore saved edits for this file
+  plan={runs:structuredClone(runs),stops:structuredClone(stops),pcFix:{},removed:{}};
+  const saved=load();
+  if(saved&&saved.runs&&Object.keys(saved.runs).every(k=>runs[k])){
+    const allIds=new Set(Object.keys(stops));
+    const savedIds=Object.values(saved.runs).flatMap(r=>r.stops);
+    if(savedIds.length===allIds.size&&savedIds.every(i=>allIds.has(i))){
+      for(const[k,r]of Object.entries(saved.runs))plan.runs[k].stops=r.stops;
+      plan.pcFix=saved.pcFix||{};plan.removed=saved.removed||{};
+      const b=$("restored");rc(b,"Your saved edits for this file were restored. ",h("button",{class:"btn small",type:"button",onclick:()=>{b.classList.add("hidden");}},"OK"));b.classList.remove("hidden");
+    }
+  }
+  history=[];
+  const days=[...new Set(Object.values(runs).map(r=>r.day))].sort((a,b)=>dayIdx(a)-dayIdx(b));
+  rc($("day"),days.map(d=>h("option",{value:d},d)));
+  selDay=days[0];selRun=null;selStop=null;
+  $("drop").classList.add("hidden");$("ui").classList.remove("hidden");
+  ["reset","xls","kml","kmlAll"].forEach(i=>$(i).disabled=false);
+  $("meta").textContent=fileName+(depotLL?` · depot ${depotPc}`:" · no depot postcode found");
+  initMap();render(true);
+}
+let routeColor=new Map();
+
+/* ---------- geometry ---------- */
+const hav=(a,b)=>{const R=6371,r=Math.PI/180,dl=(b[0]-a[0])*r,dn=(b[1]-a[1])*r;const x=Math.sin(dl/2)**2+Math.cos(a[0]*r)*Math.cos(b[0]*r)*Math.sin(dn/2)**2;return 2*R*Math.asin(Math.sqrt(x))*roadFactor;};
+const llOf=id=>{const s=plan.stops[id];const pc=plan.pcFix[id]||s.pc;return cache.get(normPc(pc))||null;};
+const llBase=id=>cache.get(normPc(base.stops[id].pc))||null;
+function pathKm(lls){const p=(depotLL?[depotLL]:[]).concat(lls).concat(depotLL?[depotLL]:[]);let k=0;for(let i=0;i<p.length-1;i++)k+=hav(p[i],p[i+1]);return k;}
+const runKm=key=>pathKm(plan.runs[key].stops.filter(id=>!plan.removed[id]).map(llOf).filter(Boolean));
+const baseKm=key=>pathKm(base.runs[key].stops.map(llBase).filter(Boolean));
+function optimiseOrder(ids){
+  const pts=ids.map(id=>[id,llOf(id)]).filter(p=>p[1]), missing=ids.filter(id=>!llOf(id));
+  if(pts.length<3)return pts.map(p=>p[0]).concat(missing);
+  let cur=depotLL||pts[0][1], left=pts.slice(), order=[];
+  while(left.length){let bi=0,bd=Infinity;left.forEach((p,i)=>{const d=hav(cur,p[1]);if(d<bd){bd=d;bi=i;}});cur=left[bi][1];order.push(left.splice(bi,1)[0]);}
+  const len=o=>pathKm(o.map(p=>p[1]));
+  let best=len(order),improved=true,guard=0;
+  while(improved&&guard++<200){improved=false;
+    for(let i=0;i<order.length-1;i++)for(let j=i+1;j<order.length;j++){
+      const cand=order.slice(0,i).concat(order.slice(i,j+1).reverse(),order.slice(j+1));const L=len(cand);
+      if(L<best-1e-9){order=cand;best=L;improved=true;}}}
+  return order.map(p=>p[0]).concat(missing);
+}
+function cheapestInsert(ids,id){
+  const ll=llOf(id); if(!ll)return ids.length;
+  const live=ids.map(i=>llOf(i));let best=ids.length,bc=Infinity;
+  for(let pos=0;pos<=ids.length;pos++){
+    const prev=pos>0?live[pos-1]:depotLL, next=pos<ids.length?live[pos]:depotLL;
+    if(!prev&&!next){return 0;}
+    const c=(prev?hav(prev,ll):0)+(next?hav(ll,next):0)-(prev&&next?hav(prev,next):0);
+    if(c<bc){bc=c;best=pos;}}
+  return best;
+}
+
+/* ---------- editing ---------- */
+function snapshot(){history.push(JSON.stringify({runs:Object.fromEntries(Object.entries(plan.runs).map(([k,r])=>[k,r.stops])),pcFix:plan.pcFix,removed:plan.removed}));if(history.length>80)history.shift();$("undo").disabled=false;}
+function applySnap(sjson){const s=JSON.parse(sjson);for(const[k,ids]of Object.entries(s.runs))plan.runs[k].stops=ids;plan.pcFix=s.pcFix;plan.removed=s.removed;}
+function commit(fit){save();render(fit);}
+$("undo").addEventListener("click",()=>{if(!history.length)return;applySnap(history.pop());$("undo").disabled=!history.length;commit(false);});
+$("reset").addEventListener("click",()=>{if(!confirm("Remove every edit and go back to the routes as they are today?"))return;snapshot();
+  for(const k of Object.keys(plan.runs))plan.runs[k].stops=base.runs[k].stops.slice();plan.pcFix={};plan.removed={};commit(true);});
+
+function moveWithin(key,from,to){snapshot();const a=plan.runs[key].stops;const [x]=a.splice(from,1);a.splice(to>from?to-1:to,0,x);commit(false);}
+function moveToRoute(id,toKey){
+  const fromKey=Object.keys(plan.runs).find(k=>plan.runs[k].stops.includes(id));if(!fromKey||fromKey===toKey)return;
+  snapshot();plan.runs[fromKey].stops=plan.runs[fromKey].stops.filter(x=>x!==id);
+  const tgt=plan.runs[toKey].stops;tgt.splice(cheapestInsert(tgt,id),0,id);selRun=toKey;selStop=id;commit(false);
+}
+function toggleRemove(id){snapshot();if(plan.removed[id])delete plan.removed[id];else plan.removed[id]=true;commit(false);}
+function setOrder(key,ids){snapshot();plan.runs[key].stops=ids;commit(false);}
+async function fixPostcode(id){
+  const s=plan.stops[id];
+  const v=prompt(`Correct delivery postcode for ${s.name} (now ${plan.pcFix[id]||s.pc||"blank"}).\nOnly the postcode is looked up online.`,plan.pcFix[id]||s.pc||"");
+  if(v==null)return;const pc=normPc(v);if(!pc){alert("That isn’t a valid UK postcode.");return;}
+  if(!cache.has(pc)){
+    try{const r=await fetch("https://api.postcodes.io/postcodes/"+encodeURIComponent(pc));const j=await r.json();
+      if(!j.result){alert(`${pc} wasn’t found. Check it and try again.`);return;}cache.set(pc,[j.result.latitude,j.result.longitude]);}
+    catch(e){alert("Couldn’t look the postcode up (no internet, or the lookup is blocked).");return;}
+  }
+  snapshot();
+  // apply to every drop for this customer
+  for(const sid of Object.keys(plan.stops))if(plan.stops[sid].cus===s.cus)plan.pcFix[sid]=pc;
+  commit(false);
+}
+
+/* ---------- save ---------- */
+const storeKey=()=>"ok-route-planner:"+fileName;
+function save(){try{localStorage.setItem(storeKey(),JSON.stringify({runs:Object.fromEntries(Object.entries(plan.runs).map(([k,r])=>[k,{stops:r.stops}])),pcFix:plan.pcFix,removed:plan.removed}));}catch(e){}}
+function load(){try{return JSON.parse(localStorage.getItem(storeKey())||"null");}catch(e){return null;}}
+
+/* ---------- map ---------- */
+let map=null, layer=null;
+function initMap(){
+  if(map)return;
+  map=L.map("map",{zoomControl:true,preferCanvas:false});
+  // CARTO and Esri tiles work when the file is opened straight from a folder; OpenStreetMap's own servers
+  // need the page to be hosted (e.g. on GitHub Pages), so it's offered as a third option.
+  const streets=L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",{maxZoom:19,subdomains:"abcd",attribution:"© OpenStreetMap contributors © CARTO"});
+  const sat=L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",{maxZoom:19,attribution:"Imagery © Esri, Maxar, Earthstar Geographics"});
+  const osm=L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap contributors"});
+  streets.addTo(map);
+  L.control.layers({"Map":streets,"Satellite":sat,"OpenStreetMap":osm},null,{position:"topright"}).addTo(map);
+  L.control.scale({imperial:true,metric:true}).addTo(map);
+  layer=L.layerGroup().addTo(map);
+  map.setView(depotLL||[53,-1.5],8);
+}
+function pinIcon(n,color,size,selected,removed){
+  return L.divIcon({className:"",iconSize:[size,size],iconAnchor:[size/2,size/2],
+    html:`<div class="pin${selected?" sel":""}" style="width:${size}px;height:${size}px;background:${removed?"#8A9AA0":color};${removed?"opacity:.6;":""}">${n??""}</div>`});
+}
+function drawMap(fit){
+  layer.clearLayers();
+  const keys=Object.keys(plan.runs).filter(k=>plan.runs[k].day===selDay);
+  const showOthers=$("others").checked, bounds=[];
+  if(depotLL){L.marker(depotLL,{icon:L.divIcon({className:"",html:'<div class="depot">D</div>',iconSize:[22,22],iconAnchor:[11,11]}),zIndexOffset:1000}).bindTooltip("Depot "+depotPc).addTo(layer);bounds.push(depotLL);}
+  for(const key of keys){
+    const run=plan.runs[key], isSel=key===selRun;
+    if(selRun&&!isSel&&!showOthers)continue;
+    const color=routeColor.get(run.route)||"#1C6B78";
+    const live=run.stops.filter(id=>!plan.removed[id]);
+    const lls=live.map(llOf).filter(Boolean);
+    const path=(depotLL?[depotLL]:[]).concat(lls).concat(depotLL?[depotLL]:[]);
+    if(path.length>1)L.polyline(path,{color,weight:isSel?4:2.5,opacity:selRun&&!isSel?0.3:0.85}).addTo(layer)
+      .on("click",()=>{selRun=key;selStop=null;render(false);});
+    let n=0;
+    for(const id of run.stops){
+      const ll=llOf(id); const removed=!!plan.removed[id]; if(!removed)n++;
+      if(!ll)continue; bounds.push(ll);
+      const s=plan.stops[id];
+      if(isSel||!selRun){
+        const m=L.marker(ll,{icon:pinIcon(isSel?(removed?"×":n):"",color,isSel?22:12,id===selStop,removed),zIndexOffset:isSel?500:0}).addTo(layer);
+        m.bindTooltip(`${removed?"(removed) ":""}${isSel?n+". ":""}${s.name} – ${plan.pcFix[id]||s.pc}`);
+        m.on("click",()=>{selRun=key;selStop=id;render(false);m.bindPopup(popupFor(id,key),{maxWidth:260}).openPopup();});
+      }else{
+        L.circleMarker(ll,{radius:3.5,color,weight:1,fillColor:color,fillOpacity:selRun?0.35:0.8,opacity:selRun?0.35:0.8}).addTo(layer)
+          .on("click",()=>{selRun=key;selStop=id;render(false);});
+      }
+    }
+  }
+  if(fit){
+    let pts=bounds;
+    if(selRun){const r=plan.runs[selRun];pts=r.stops.map(llOf).filter(Boolean).concat(depotLL?[depotLL]:[]);}
+    if(pts.length)map.fitBounds(L.latLngBounds(pts),{padding:[30,30],maxZoom:13});
+  }
+}
+function popupFor(id,key){
+  const s=plan.stops[id], others=Object.keys(plan.runs).filter(k=>plan.runs[k].day===selDay&&k!==key);
+  const sel=h("select",null,h("option",{value:""},"Move to route…"),others.map(k=>h("option",{value:k},`${plan.runs[k].route} ${plan.runs[k].name}`)));
+  sel.addEventListener("change",()=>{if(sel.value){map.closePopup();moveToRoute(id,sel.value);}});
+  return h("div",{class:"pop"},h("h4",null,s.name),h("div",{class:"pc"},`${plan.pcFix[id]||s.pc}${s.info.sales!=null?` · ${gbp.format(s.info.sales)} sales a week`:""}`),
+    s.info.lapsed?h("div",{class:"flag lap"},"lapsed"):null,
+    h("div",null,sel),
+    h("button",{type:"button",onclick:()=>{map.closePopup();toggleRemove(id);}},plan.removed[id]?"Put back on route":"Remove from route")," ",
+    h("button",{type:"button",onclick:()=>{map.closePopup();fixPostcode(id);}},"Fix postcode"));
+}
+
+/* ---------- sidebar ---------- */
+$("day").addEventListener("change",e=>{selDay=e.target.value;selRun=null;selStop=null;render(true);});
+$("others").addEventListener("change",()=>drawMap(false));
+
+function render(fit){
+  renderTotals();renderRuns();renderPanel();renderChanges();drawMap(fit);
+}
+function renderTotals(){
+  const keys=Object.keys(plan.runs);
+  const before=keys.reduce((s,k)=>s+baseKm(k),0), after=keys.reduce((s,k)=>s+runKm(k),0), diff=before-after;
+  const dk=keys.filter(k=>plan.runs[k].day===selDay), db=dk.reduce((s,k)=>s+baseKm(k),0), da=dk.reduce((s,k)=>s+runKm(k),0);
+  rc($("totals"),
+    h("div",{class:"tot"},h("b",null,int.format(da)+" km"),h("span",null,`${selDay}, was ${int.format(db)}`)),
+    h("div",{class:"tot"},h("b",null,int.format(after)+" km"),h("span",null,`whole week, was ${int.format(before)}`)),
+    h("div",{class:"tot"},h("b",{class:diff>0.5?"good":diff<-0.5?"bad":null},Math.abs(diff)<0.5?"0 km":(diff>0?"−":"+")+int.format(Math.abs(diff))+" km"),h("span",null,`a week, about ${gbp.format(Math.abs(diff)*costKm*52)} a year`)));
+}
+function renderRuns(){
+  const keys=Object.keys(plan.runs).filter(k=>plan.runs[k].day===selDay).sort((a,b)=>plan.runs[a].route.localeCompare(plan.runs[b].route,"en",{numeric:true}));
+  rc($("runs"),keys.map(k=>{const r=plan.runs[k],b=baseKm(k),a=runKm(k),live=r.stops.filter(i=>!plan.removed[i]).length;
+    return h("button",{class:"run",type:"button","aria-pressed":String(k===selRun),onclick:()=>{selRun=selRun===k?null:k;selStop=null;render(true);}},
+      h("span",{class:"sw",style:`background:${routeColor.get(r.route)}`}),
+      h("span",null,h("span",{class:"nm"},`${r.route} ${r.name}`),h("br"),h("span",{class:"sub"},`${live} stops`)),
+      h("span",{class:"km"},h("b",null,int.format(a)+" km"),Math.abs(a-b)>0.5?h("span",{class:a<b?"good":"bad"},` (${a<b?"−":"+"}${int.format(Math.abs(a-b))})`):null));}));
+}
+function renderPanel(){
+  const p=$("panel");
+  if(!selRun){p.classList.add("hidden");return;}
+  p.classList.remove("hidden");
+  const r=plan.runs[selRun], key=selRun, b=baseKm(key), a=runKm(key);
+  const others=Object.keys(plan.runs).filter(k=>plan.runs[k].day===selDay&&k!==key);
+  const sugOrder=()=>{const withSug=r.stops.slice().sort((x,y)=>(plan.stops[x].sug??1e9)-(plan.stops[y].sug??1e9));return withSug;};
+  let n=0, dragFrom=null;
+  const list=h("ol",{class:"stops"},r.stops.map((id,idx)=>{
+    const s=plan.stops[id], removed=!!plan.removed[id]; if(!removed)n++;
+    const moved=s.origRoute!==r.route, ll=llOf(id), far=s.info.xkm!=null&&s.info.xkm>=farKm;
+    const li=h("li",{class:`stop${removed?" removed":""}${id===selStop?" sel":""}`,draggable:"true"},
+      h("span",{class:"handle",title:"Drag to reorder","aria-hidden":"true"},"⋮⋮"),
+      h("span",{class:"seqno"},removed?"–":n),
+      h("div",null,
+        h("div",{class:"name"},s.name,s.info.lapsed?h("span",{class:"flag lap"},"lapsed"):null,far?h("span",{class:"flag far"},"far"):null,
+          moved?h("span",{class:"flag chg"},`from ${s.origRoute}`):null,plan.pcFix[id]?h("span",{class:"flag chg"},"postcode fixed"):null,!ll?h("span",{class:"flag nol"},"not on map"):null),
+        h("div",{class:"pc"},plan.pcFix[id]||s.pc||"no postcode",s.info.sales!=null?` · ${gbp.format(s.info.sales)}/wk`:""),
+        h("div",{class:"tools"},
+          h("button",{type:"button","aria-label":"Move up",disabled:idx===0?true:null,onclick:()=>moveWithin(key,idx,idx-1)},"↑"),
+          h("button",{type:"button","aria-label":"Move down",disabled:idx===r.stops.length-1?true:null,onclick:()=>moveWithin(key,idx,idx+2)},"↓"),
+          (()=>{const sel=h("select",{"aria-label":"Move to another route"},h("option",{value:""},"Move to route…"),others.map(k=>h("option",{value:k},`${plan.runs[k].route} ${plan.runs[k].name}`)));
+            sel.addEventListener("change",()=>{if(sel.value)moveToRoute(id,sel.value);});return sel;})(),
+          h("button",{type:"button",onclick:()=>toggleRemove(id)},removed?"Put back":"Remove"),
+          h("button",{type:"button",onclick:()=>fixPostcode(id)},"Fix postcode"))));
+    li.addEventListener("click",e=>{if(e.target.closest("button,select"))return;selStop=id;drawMap(false);for(const x of list.children)x.classList.remove("sel");li.classList.add("sel");
+      if(ll)map.panTo(ll);});
+    li.addEventListener("dragstart",e=>{dragFrom=idx;li.classList.add("dragging");e.dataTransfer.effectAllowed="move";e.dataTransfer.setData("text/plain",String(idx));});
+    li.addEventListener("dragend",()=>li.classList.remove("dragging"));
+    li.addEventListener("dragover",e=>{e.preventDefault();li.classList.add("over");});
+    li.addEventListener("dragleave",()=>li.classList.remove("over"));
+    li.addEventListener("drop",e=>{e.preventDefault();li.classList.remove("over");const from=dragFrom??Number(e.dataTransfer.getData("text/plain"));if(from!==idx)moveWithin(key,from,idx);});
+    return li;}));
+  const unlocated=r.stops.filter(id=>!llOf(id)).length;
+  rc(p,
+    h("h3",null,`${r.day}, route ${r.route} ${r.name}`),
+    h("div",{class:"kmline"},`${int.format(a)} km now`,Math.abs(a-b)>0.5?` (was ${int.format(b)} km)`:" (unchanged)",depotLL?", depot to depot":""),
+    h("div",{class:"row"},
+      h("button",{class:"btn small",type:"button",onclick:()=>setOrder(key,optimiseOrder(r.stops.filter(i=>!plan.removed[i])).concat(r.stops.filter(i=>plan.removed[i])))},"Optimise this route"),
+      h("button",{class:"btn small",type:"button",onclick:()=>setOrder(key,sugOrder())},"Use notebook’s suggested order"),
+      h("button",{class:"btn small",type:"button",onclick:()=>{const orig=base.runs[key].stops.filter(i=>r.stops.includes(i));const extra=r.stops.filter(i=>!orig.includes(i));setOrder(key,orig.concat(extra));}},"Original order")),
+    list,
+    h("p",{class:"note"},"Drag stops, or use the arrows, to change the order. ",unlocated?`${unlocated} stop${unlocated>1?"s aren’t":" isn’t"} on the map: fix the postcode to place ${unlocated>1?"them":"it"}.`:""));
+}
+function renderChanges(){
+  const items=[];
+  for(const[k,r]of Object.entries(plan.runs)){
+    const moved=r.stops.filter(i=>plan.stops[i].origRoute!==r.route);
+    for(const i of moved)items.push(`${plan.stops[i].name}: moved from route ${plan.stops[i].origRoute} to ${r.route} on ${r.day}`);
+    const orig=base.runs[k].stops.filter(i=>r.stops.includes(i)), now=r.stops.filter(i=>orig.includes(i));
+    if(orig.join()!==now.join())items.push(`${r.day}, route ${r.route} ${r.name}: stop order changed`);
+  }
+  for(const i of Object.keys(plan.removed))items.push(`${plan.stops[i].name}: removed from ${plan.stops[i].day} route ${plan.stops[i].origRoute}`);
+  const seen=new Set();for(const[i,pc]of Object.entries(plan.pcFix)){const s=plan.stops[i];if(seen.has(s.cus))continue;seen.add(s.cus);items.push(`${s.name}: postcode ${s.pc||"blank"} → ${pc}`);}
+  rc($("changes"),items.length?items.slice(0,60).map(t=>h("li",null,t)):h("li",null,"No changes yet."),items.length>60?h("li",null,`…and ${items.length-60} more (see the Excel export).`):null);
+}
+
+/* ---------- exports ---------- */
+const today=()=>new Date().toISOString().slice(0,10);
+function download(name,blob){const a=h("a",{href:URL.createObjectURL(blob),download:name});document.body.append(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500);}
+$("xls").addEventListener("click",()=>{
+  const rows=[],chg=[],sum=[];
+  for(const k of Object.keys(plan.runs).sort((a,b)=>dayIdx(plan.runs[a].day)-dayIdx(plan.runs[b].day)||plan.runs[a].route.localeCompare(plan.runs[b].route,"en",{numeric:true}))){
+    const r=plan.runs[k];let n=0;
+    for(const id of r.stops){const s=plan.stops[id],rem=!!plan.removed[id];if(!rem)n++;
+      rows.push({"Day":r.day,"RouteNo":r.route,"Route Name":r.name,"New Sequence":rem?"":n,"Original Route":s.origRoute,"Original Sequence":s.cur,
+        "Cus no.":s.cus,"Name":s.name,"Postcode":plan.pcFix[id]||s.pc,"Postcode changed":plan.pcFix[id]?"Yes":"","Removed":rem?"Yes":"",
+        "Moved route":s.origRoute!==r.route?"Yes":""});}
+    sum.push({"Day":r.day,"RouteNo":r.route,"Route Name":r.name,"Stops":r.stops.filter(i=>!plan.removed[i]).length,"Km before":Math.round(baseKm(k)*10)/10,"Km after":Math.round(runKm(k)*10)/10,"Saving km":Math.round((baseKm(k)-runKm(k))*10)/10});
+  }
+  for(const li of $("changes").children)chg.push({"Change":li.textContent});
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(sum),"Summary");
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),"Route_Plan");
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(chg),"Changes");
+  XLSX.writeFile(wb,`Ocean_King_route_plan_${today()}.xlsx`);
+});
+function exportKml(days){
+  const kmlColor=hex=>{const c=hex.replace("#","");return "ff"+c.slice(4,6)+c.slice(2,4)+c.slice(0,2);};
+  // stops show only their number on the map; the customer's details are in the click-through balloon
+  const styles=[...routeColor.entries()].map(([r,c])=>
+    `<Style id="r${esc(r)}"><LineStyle><color>${kmlColor(c)}</color><width>5</width></LineStyle>`+
+    `<IconStyle><color>${kmlColor(c)}</color><scale>0.7</scale><Icon><href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href></Icon></IconStyle>`+
+    `<LabelStyle><color>${kmlColor(c)}</color><scale>0.75</scale></LabelStyle></Style>`+
+    `<Style id="lbl${esc(r)}"><IconStyle><scale>0</scale></IconStyle><LabelStyle><color>${kmlColor(c)}</color><scale>1.3</scale></LabelStyle></Style>`).join("")+
+    `<Style id="depot"><IconStyle><scale>1.2</scale><Icon><href>http://maps.google.com/mapfiles/kml/shapes/truck.png</href></Icon></IconStyle><LabelStyle><scale>1.1</scale></LabelStyle></Style>`+
+    `<Style id="radio"><ListStyle><listItemType>radioFolder</listItemType></ListStyle></Style>`;
+  const byDay={};for(const k of Object.keys(plan.runs))if(days.includes(plan.runs[k].day))(byDay[plan.runs[k].day]=byDay[plan.runs[k].day]||[]).push(k);
+  const dayList=Object.keys(byDay).sort((a,b)=>dayIdx(a)-dayIdx(b));
+  let body="";
+  if(depotLL)body+=`<Placemark><name>Depot</name><description>${esc(depotPc)}</description><styleUrl>#depot</styleUrl><Point><coordinates>${depotLL[1]},${depotLL[0]},0</coordinates></Point></Placemark>`;
+  // with several days, only one day can be switched on at a time
+  if(dayList.length>1)body+=`<Folder><name>Days (switch one on at a time)</name><styleUrl>#radio</styleUrl>`;
+  for(const d of dayList){
+    const show=dayList.length===1||d===selDay;
+    body+=`<Folder><name>${esc(d)}</name><visibility>${show?1:0}</visibility><open>${show?1:0}</open>`;
+    for(const k of byDay[d].sort((a,b)=>plan.runs[a].route.localeCompare(plan.runs[b].route,"en",{numeric:true}))){
+      const r=plan.runs[k], live=r.stops.filter(i=>!plan.removed[i]), lls=live.map(llOf).filter(Boolean);
+      const coords=(depotLL?[depotLL]:[]).concat(lls).concat(depotLL?[depotLL]:[]).map(ll=>`${ll[1]},${ll[0]},0`).join(" ");
+      const title=`${SHORTDAY(d)} · Route ${r.route} ${r.name}`;
+      body+=`<Folder><name>Route ${esc(r.route)} ${esc(r.name)}: ${live.length} stops, ${int.format(runKm(k))} km</name><visibility>${show?1:0}</visibility>`;
+      body+=`<Placemark><name>${esc(title)}</name><visibility>${show?1:0}</visibility><description>${esc(`${live.length} stops, about ${int.format(runKm(k))} km depot to depot`)}</description><styleUrl>#r${esc(r.route)}</styleUrl><LineString><tessellate>1</tessellate><coordinates>${coords}</coordinates></LineString></Placemark>`;
+      if(lls.length){ // route name label placed at the middle of its stops
+        const c=[lls.reduce((s,l)=>s+l[0],0)/lls.length,lls.reduce((s,l)=>s+l[1],0)/lls.length];
+        body+=`<Placemark><name>${esc(`R${r.route} ${r.name}`)}</name><visibility>${show?1:0}</visibility><styleUrl>#lbl${esc(r.route)}</styleUrl><Point><coordinates>${c[1]},${c[0]},0</coordinates></Point></Placemark>`;
+      }
+      live.forEach((id,i)=>{const ll=llOf(id);if(!ll)return;const st=plan.stops[id];
+        const desc=`${st.name}\nStop ${i+1} of ${live.length}, ${title}\n${plan.pcFix[id]||st.pc}`+(st.info.sales!=null?`\n${gbp.format(st.info.sales)} sales a week`:"");
+        body+=`<Placemark><name>${i+1}</name><visibility>${show?1:0}</visibility><description>${esc(desc).replace(/\n/g,"&lt;br&gt;")}</description><styleUrl>#r${esc(r.route)}</styleUrl><Point><coordinates>${ll[1]},${ll[0]},0</coordinates></Point></Placemark>`;});
+      body+="</Folder>";
+    }
+    body+="</Folder>";
+  }
+  if(dayList.length>1)body+="</Folder>";
+  const label=dayList.length===1?dayList[0]:"all days";
+  const kml=`<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Ocean King routes, ${esc(label)} (${today()})</name>${styles}${body}</Document></kml>`;
+  download(`Ocean_King_routes_${label.replace(/\s+/g,"_")}_${today()}.kml`,new Blob([kml],{type:"application/vnd.google-earth.kml+xml"}));
+}
+const SHORTDAY=d=>d.slice(0,3);
+$("kml").addEventListener("click",()=>exportKml([selDay]));
+$("kmlAll").addEventListener("click",()=>exportKml(DAYS));
+})();
+</script>
+</body>
+</html>
